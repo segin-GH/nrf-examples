@@ -41,16 +41,22 @@ extern "C"
 
     typedef struct
     {
-        uint8_t  soh;
-        uint8_t  ver;
+        uint8_t soh;
+        uint8_t ver;
         uint16_t cmd;
-        uint8_t  ssoh;
+        uint8_t ssoh;
         uint16_t len;
-        void    *buff;
+        void *buff;
         uint32_t crc;
-        uint8_t  id;
-        uint8_t  eot;
+        uint8_t id;
+        uint8_t eot;
     } frame_frm_t;
+
+#define FF_FRAME_POPULATE(cmd_val, ssoh_val, len_val, buff_ptr)                                                        \
+    {                                                                                                                  \
+        .soh = 0xAA, .ver = 1, .cmd = (cmd_val), .ssoh = (ssoh_val), .len = (len_val), .buff = (buff_ptr), .crc = 0,   \
+        .id = 0, .eot = 0x55                                                                                           \
+    }
 
     ff_err_t ff_process_frame(frame_frm_t *frame, uint8_t *buff, uint16_t len);
 

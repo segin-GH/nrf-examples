@@ -6,10 +6,7 @@
 #include <zephyr/sys/printk.h>
 
 #include "frame_format.h"
-
-static ff_err_t ff_unpack_frame(frame_frm_t *frame, const uint8_t *filter_data)
-{
-    if (!frame || !filter_data)
+static ff_err_t ff_unpack_frame(frame_frm_t *frame, const uint8_t *filter_data) { if (!frame || !filter_data)
     {
         printk("Invalid input\n");
         return FF_ERR_INVALID_INPUT;
@@ -37,6 +34,34 @@ static ff_err_t ff_unpack_frame(frame_frm_t *frame, const uint8_t *filter_data)
 
     frame->eot = filter_data[12 + frame->len];
 
+    return FF_ERR_OK;
+}
+
+uint8_t *ff_pack_frame(frame_frm_t *frame, const uint8_t *filter_data)
+{
+    if (!frame || !filter_data)
+    {
+        printk("Invalid input\n");
+        return NULL;
+    }
+
+    /* TODO: Validate the frame */
+
+    /* TODO: Convert it into a uint8_t buffer */
+
+    /* TODO: Add CRC */
+
+    return NULL;
+}
+
+static ff_err_t ff_add_esc_sequence_frame(frame_frm_t *frame, uint8_t *raw_buff)
+{
+    if (!frame || !raw_buff)
+    {
+        printk("Invalid input\n");
+        return FF_ERR_INVALID_INPUT;
+    }
+    // TODO: Implement this function
     return FF_ERR_OK;
 }
 
@@ -194,5 +219,26 @@ ff_err_t ff_process_frame(frame_frm_t *frame, uint8_t *raw_buff, uint16_t len)
     }
 
     free(filter_data);
+    return FF_ERR_OK;
+}
+
+ff_err_t ff_create_frame(frame_frm_t *frame)
+{
+    if (!frame)
+    {
+        printk("Invalid input\n");
+        return FF_ERR_INVALID_INPUT;
+    }
+
+    uint8_t *buffer = ff_pack_frame(frame, NULL);
+    if (!buffer)
+    {
+        printk("Error in packing frame\n");
+        return FF_ERR_INVALID_INPUT;
+    }
+
+    /* Add escape sequence */
+    ff_add_esc_sequence_frame(frame, buffer);
+
     return FF_ERR_OK;
 }
