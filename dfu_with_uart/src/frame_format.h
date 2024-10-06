@@ -37,6 +37,7 @@ extern "C"
         FF_SSOH_1 = 1, /* SSOH 1 -> tx msg in ff format */
         FF_SSOH_2,     /* SSOH 2 -> rx msg in ff format */
         FF_SSOH_3,     /* SSOH 3 -> error msg in ff format */
+        FF_SSOH_4,     /* SSOH 4 -> ack msg in ff format */
     } ff_ssoh_t;
 
     typedef struct
@@ -52,13 +53,39 @@ extern "C"
         uint8_t eot;
     } frame_frm_t;
 
-#define FF_FRAME_POPULATE(cmd_val, ssoh_val, len_val, buff_ptr)                                                        \
+#define FF_FRAME_POPULATE_V1_TX(cmd_val, len_val, buff_ptr)                                                            \
     {                                                                                                                  \
-        .soh = 0xAA, .ver = 1, .cmd = (cmd_val), .ssoh = (ssoh_val), .len = (len_val), .buff = (buff_ptr), .crc = 0,   \
+        .soh = 0xAA, .ver = 1, .cmd = (cmd_val), .ssoh = (FF_SSOH_1), .len = (len_val), .buff = (buff_ptr), .crc = 0,  \
         .id = 0, .eot = 0x55                                                                                           \
     }
 
+#define FF_FRAME_POPULATE_V1_RX(cmd_val, len_val, buff_ptr, id)                                                        \
+    {                                                                                                                  \
+        .soh = 0xAA, .ver = 1, .cmd = (cmd_val), .ssoh = (FF_SSOH_2), .len = (len_val), .buff = (buff_ptr), .crc = 0,  \
+        .id = (id), .eot = 0x55                                                                                        \
+    }
+
+#define FF_FRAME_POPULATE_V1_ERR(cmd_val, len_val, buff_ptr, id)                                                       \
+    {                                                                                                                  \
+        .soh = 0xAA, .ver = 1, .cmd = (cmd_val), .ssoh = (FF_SSOH_3), .len = (len_val), .buff = (buff_ptr), .crc = 0,  \
+        .id = (id), .eot = 0x55                                                                                        \
+    }
+
+#define FF_FRAME_POPULATE_V1_ACK(cmd_val, frame_id)                                                                    \
+    {                                                                                                                  \
+        .soh = 0xAA, .ver = 1, .cmd = (cmd_val), .ssoh = (FF_SSOH_4), .len = 0, .buff = NULL, .crc = 0,                \
+        .id = (frame_id), .eot = 0x55                                                                                  \
+    }
+
+    typedef struct
+    {
+        uint8_t *buff;
+        uint16_t len;
+    } ff_buff_t;
+
     ff_err_t ff_process_frame(frame_frm_t *frame, uint8_t *buff, uint16_t len);
+    ff_buff_t *ff_create_frame(frame_frm_t *frame);
+    void ff_free_frame(ff_buff_t *frame);
 
 #ifdef __cplusplus
 }

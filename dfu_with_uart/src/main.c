@@ -1,5 +1,6 @@
 #include "frame_format.h"
 #include "zephyr/sys/printk.h"
+#include "zephyr/sys/time_units.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -13,7 +14,7 @@
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/reboot.h>
 
-#define LED_NODE DT_ALIAS(led1)
+#define LED_NODE      DT_ALIAS(led1)
 #define FW_CHUNK_SIZE 512
 
 #define ESC_CHAR 0x7D
@@ -29,7 +30,7 @@
 #define CURRENT_IMAGE_PARTITION_ID IMAGE_1_PARTITION_ID
 
 #define UART_QUEUE_MAX_SIZE 10
-#define UART_MAX_RX 1024
+#define UART_MAX_RX         1024
 
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED_NODE, gpios);
 
@@ -58,37 +59,52 @@ K_MSGQ_DEFINE(uart_msgq, sizeof(struct uart_data), UART_QUEUE_MAX_SIZE, 4);
 static struct uart_data rx_buf;
 static int rx_buf_pos;
 
+void uart_send(const struct device *dev, const uint8_t *data, size_t len)
+{
+    for (int i = 0; i < len; i++)
+    {
+        uart_poll_out(dev, data[i]);
+    }
+    printk("Sent %d bytes\n", len);
+}
+
 void serial_cb(const struct device *dev, void *user_data)
 {
     uint8_t c;
     if (!uart_irq_update(dev))
-    {
         return;
-    }
 
-    /* read until FIFO empty */
-    while (uart_fifo_read(dev, &c, 1) == 1)
+    if (uart_irq_tx_ready(dev))
     {
-        if ((c == 0x55) && rx_buf_pos > 0)
+        printk("TX ready\n");
+    }
+
+    if (uart_irq_rx_ready(dev))
+    {
+        while (uart_fifo_read(dev, &c, 1) == 1)
         {
-            /* terminate buffer with the special character */
-            rx_buf.data[rx_buf_pos] = c;
+            if ((c == 0x55) && rx_buf_pos > 0)
+            {
+                /* terminate buffer with the special character */
+                rx_buf.data[rx_buf_pos] = c;
 
-            /* set the length of the data in the struct */
-            rx_buf.len = rx_buf_pos + 1;
+                /* set the length of the data in the struct */
+                rx_buf.len = rx_buf_pos + 1;
 
-            /* if queue is full, message is silently dropped */
-            k_msgq_put(&uart_msgq, &rx_buf, K_NO_WAIT);
+                /* if queue is full, message is silently dropped */
+                k_msgq_put(&uart_msgq, &rx_buf, K_NO_WAIT);
 
-            /* reset the buffer (it was copied to the msgq) */
-            rx_buf_pos = 0;
-        }
-        else if (rx_buf_pos < (sizeof(rx_buf.data) - 1))
-        {
-            rx_buf.data[rx_buf_pos++] = c;
-            // FIXME: if buffer is full, we should drop the message?
+                /* reset the buffer (it was copied to the msgq) */
+                rx_buf_pos = 0;
+            }
+            else if (rx_buf_pos < (sizeof(rx_buf.data) - 1))
+            {
+                rx_buf.data[rx_buf_pos++] = c;
+                // FIXME: if buffer is full, we should drop the message?
+            }
         }
     }
+    /* read until FIFO empty */
 }
 
 int init_uart(const struct device *dev)
@@ -119,6 +135,7 @@ int init_uart(const struct device *dev)
     }
 
     uart_irq_rx_enable(dev);
+
     return 0;
 }
 
@@ -176,7 +193,7 @@ void handle_error(state_dfu_context_t *state_ctx, struct flash_img_context *ctx,
 
 int main(void)
 {
-    printk("Hello World! 2 State machine OTA update\n");
+    printk("Hello World! OTA 1 State machine OTA update\n");
 
     // LED initialization
     int err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
@@ -266,18 +283,18 @@ void handle_idle(state_dfu_context_t *state_ctx, struct flash_img_context *ctx, 
 
         if (frame.cmd == 0xF1)
         {
-            printk("Received start command\n");
-            // Erase the flash area
-            int ret = flash_area_erase(ctx->flash_area, 0, ctx->flash_area->fa_size);
-            if (ret != 0)
-            {
-                printk("Flash erase failed (%d)\n", ret);
-                state_ctx->error = DFU_ERR_FLASH_WRITE;
-                state = STATE_ERROR;
-                break;
-            }
-
-            printk("Flash erased\n");
+            // printk("Received start command\n");
+            // // Erase the flash area
+            // int ret = flash_area_erase(ctx->flash_area, 0, ctx->flash_area->fa_size);
+            // if (ret != 0)
+            // {
+            //     printk("Flash erase failed (%d)\n", ret);
+            //     state_ctx->error = DFU_ERR_FLASH_WRITE;
+            //     state = STATE_ERROR;
+            //     break;
+            // }
+            //
+            // printk("Flash erased\n");
 
             if (!frame.buff && frame.len != 2)
             {
@@ -294,9 +311,26 @@ void handle_idle(state_dfu_context_t *state_ctx, struct flash_img_context *ctx, 
             state_ctx->buffer_len = frame.len;
             state_ctx->is_valid = true;
 
-            frame_frm_t frmt = FF_FRAME_POPULATE(0xF2, FF_SSOH_1, 0, NULL);
+            frame_frm_t frmt = FF_FRAME_POPULATE_V1_ACK(frame.cmd, frame.id);
+            frmt.crc = 0xffff;
+
+            ff_buff_t *ff_buff = ff_create_frame(&frmt);
+            if (!ff_buff)
+            {
+                printk("Failed to create frame\n");
+                state_ctx->error = DFU_ERR_FRAME_FORMAT;
+                state = STATE_ERROR;
+                break;
+            }
+
+            // uart_send(uart_dev, ff_buff->buff, ff_buff->len);
+            // ff_free_frame(ff_buff);
+            //
+            // state = STATE_DFU_WRITING;
+            break;
         }
     }
+    return;
 }
 
 void handle_dfu_writing(state_dfu_context_t *state_ctx, struct flash_img_context *ctx, const struct device *uart_dev)

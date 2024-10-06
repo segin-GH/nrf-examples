@@ -6,17 +6,19 @@
 #include <zephyr/sys/printk.h>
 
 #include "frame_format.h"
-static ff_err_t ff_unpack_frame(frame_frm_t *frame, const uint8_t *filter_data) { if (!frame || !filter_data)
+static ff_err_t ff_unpack_frame(frame_frm_t *frame, const uint8_t *filter_data)
+{
+    if (!frame || !filter_data)
     {
         printk("Invalid input\n");
         return FF_ERR_INVALID_INPUT;
     }
 
-    frame->soh  = filter_data[0];                         // 1 byte
-    frame->ver  = filter_data[1];                         // 1 byte
-    frame->cmd  = (filter_data[2] << 8) | filter_data[3]; // 2 bytes
-    frame->ssoh = filter_data[4];                         // 1 byte
-    frame->len  = (filter_data[5] << 8) | filter_data[6]; // 2 bytes
+    frame->soh = filter_data[0];                         // 1 byte
+    frame->ver = filter_data[1];                         // 1 byte
+    frame->cmd = (filter_data[2] << 8) | filter_data[3]; // 2 bytes
+    frame->ssoh = filter_data[4];                        // 1 byte
+    frame->len = (filter_data[5] << 8) | filter_data[6]; // 2 bytes
 
     // Allocate memory for buff and copy data
     frame->buff = malloc(frame->len * sizeof(uint8_t));
@@ -37,34 +39,6 @@ static ff_err_t ff_unpack_frame(frame_frm_t *frame, const uint8_t *filter_data) 
     return FF_ERR_OK;
 }
 
-uint8_t *ff_pack_frame(frame_frm_t *frame, const uint8_t *filter_data)
-{
-    if (!frame || !filter_data)
-    {
-        printk("Invalid input\n");
-        return NULL;
-    }
-
-    /* TODO: Validate the frame */
-
-    /* TODO: Convert it into a uint8_t buffer */
-
-    /* TODO: Add CRC */
-
-    return NULL;
-}
-
-static ff_err_t ff_add_esc_sequence_frame(frame_frm_t *frame, uint8_t *raw_buff)
-{
-    if (!frame || !raw_buff)
-    {
-        printk("Invalid input\n");
-        return FF_ERR_INVALID_INPUT;
-    }
-    // TODO: Implement this function
-    return FF_ERR_OK;
-}
-
 static void ff_print_uint8_array(const char *name, uint8_t *data, size_t len)
 {
     printk("%s: ", name);
@@ -73,6 +47,72 @@ static void ff_print_uint8_array(const char *name, uint8_t *data, size_t len)
         printk("%02x", data[i]);
     }
     printk("\n");
+}
+
+// Function to add escape sequence to data, excluding first and last bytes (header/footer)
+uint8_t *ff_add_escape_sequence(const uint8_t *data, size_t len, size_t *new_len)
+{
+    if (len <= 2)
+    {
+        // If there are only header and footer bytes, no need to escape anything
+        *new_len = len;
+        uint8_t *result = (uint8_t *)malloc(len);
+        if (result != NULL)
+        {
+            for (size_t i = 0; i < len; i++)
+            {
+                result[i] = data[i]; // Just copy the data
+            }
+        }
+        return result;
+    }
+
+    // Step 1: Calculate new length (excluding the first and last bytes)
+    size_t escaped_len = len; // Initial length includes header and footer without modification
+
+    for (size_t i = 1; i < len - 1; i++)
+    { // Start from index 1 and end at len - 1 (exclude header/footer)
+        uint8_t byte = data[i];
+        if (byte == FF_SOF_CHAR || byte == FF_EOF_CHAR || byte == FF_ESC_CHAR)
+        {
+            escaped_len += 1; // Special byte requires escape + XORed byte, adding an extra byte
+        }
+    }
+
+    // Step 2: Allocate memory for the new buffer
+    uint8_t *escaped_data = (uint8_t *)malloc(escaped_len);
+    if (escaped_data == NULL)
+    {
+        // Handle memory allocation failure
+        *new_len = 0;
+        return NULL;
+    }
+
+    // Step 3: Copy the header byte as-is
+    escaped_data[0] = data[0]; // Header (first byte)
+
+    // Step 4: Process and escape the middle bytes (excluding header and footer)
+    size_t idx = 1;
+    for (size_t i = 1; i < len - 1; i++)
+    {
+        uint8_t byte = data[i];
+        if (byte == FF_SOF_CHAR || byte == FF_EOF_CHAR || byte == FF_ESC_CHAR)
+        {
+            escaped_data[idx++] = FF_ESC_CHAR;        // Insert escape character
+            escaped_data[idx++] = byte ^ FF_XOR_MASK; // Insert XORed byte
+        }
+        else
+        {
+            escaped_data[idx++] = byte; // Insert regular byte
+        }
+    }
+
+    // Step 5: Copy the footer byte as-is
+    escaped_data[idx] = data[len - 1]; // Footer (last byte)
+    ff_print_uint8_array("Escaped data", escaped_data, escaped_len);
+
+    *new_len = escaped_len; // Update new length
+    return escaped_data;
 }
 
 static size_t ff_calculate_filtered_length(const uint8_t *data, size_t data_len)
@@ -158,6 +198,54 @@ static ff_err_t ff_validate_raw_frame(uint8_t *raw_buff, uint16_t len)
     return FF_ERR_OK;
 }
 
+size_t ff_get_rawbuff_len(frame_frm_t *frame)
+{
+
+    return (13 + frame->len);
+}
+
+uint8_t *ff_pack_frame(frame_frm_t *frame)
+{
+    if (!frame)
+    {
+        printk("Invalid input\n");
+        return NULL;
+    }
+
+    uint8_t *packed_data = malloc(ff_get_rawbuff_len(frame));
+    if (!packed_data)
+    {
+        printk("Memory allocation failed\n");
+        return NULL;
+    }
+
+    // Pack the frame fields
+    packed_data[0] = frame->soh;
+    packed_data[1] = frame->ver;
+    packed_data[2] = (frame->cmd >> 8) & 0xFF;
+    packed_data[3] = frame->cmd & 0xFF;
+    packed_data[4] = frame->ssoh;
+    packed_data[5] = (frame->len >> 8) & 0xFF;
+    packed_data[6] = frame->len & 0xFF;
+
+    // Copy buffer data
+    memcpy(&packed_data[7], frame->buff, frame->len);
+
+    // Add frame ID
+    packed_data[7 + frame->len] = frame->id;
+
+    // Add CRC
+    packed_data[8 + frame->len] = (frame->crc >> 24) & 0xFF;
+    packed_data[9 + frame->len] = (frame->crc >> 16) & 0xFF;
+    packed_data[10 + frame->len] = (frame->crc >> 8) & 0xFF;
+    packed_data[11 + frame->len] = frame->crc & 0xFF;
+
+    // Add EOT
+    packed_data[12 + frame->len] = frame->eot;
+
+    return packed_data;
+}
+
 ff_err_t ff_process_frame(frame_frm_t *frame, uint8_t *raw_buff, uint16_t len)
 {
     if (!frame)
@@ -222,23 +310,53 @@ ff_err_t ff_process_frame(frame_frm_t *frame, uint8_t *raw_buff, uint16_t len)
     return FF_ERR_OK;
 }
 
-ff_err_t ff_create_frame(frame_frm_t *frame)
+ff_buff_t *ff_create_frame(frame_frm_t *frame)
 {
+
     if (!frame)
     {
-        printk("Invalid input\n");
-        return FF_ERR_INVALID_INPUT;
+        printk("Invalid input Args is NULL\n");
+        return NULL;
     }
 
-    uint8_t *buffer = ff_pack_frame(frame, NULL);
+    uint8_t *buffer = ff_pack_frame(frame);
     if (!buffer)
     {
         printk("Error in packing frame\n");
-        return FF_ERR_INVALID_INPUT;
+        return NULL;
     }
 
     /* Add escape sequence */
-    ff_add_esc_sequence_frame(frame, buffer);
+    int new_len;
 
-    return FF_ERR_OK;
+    uint8_t *buff = ff_add_escape_sequence(buffer, ff_get_rawbuff_len(frame), &new_len);
+    if (!buff)
+    {
+        printk("Error in adding escape sequence\n");
+        return NULL;
+    }
+
+    ff_buff_t *ff_buff = malloc(sizeof(ff_buff_t));
+    if (!ff_buff)
+    {
+        printk("Memory allocation failed\n");
+        return NULL;
+    }
+
+    ff_buff->buff = buff;
+    ff_buff->len = new_len;
+
+    return ff_buff;
+}
+
+void ff_free_frame(ff_buff_t *ff_buff)
+{
+    if (ff_buff)
+    {
+        if (ff_buff->buff)
+        {
+            free(ff_buff->buff);
+        }
+        free(ff_buff);
+    }
 }
