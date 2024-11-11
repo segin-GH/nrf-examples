@@ -17,10 +17,10 @@
 #define LED_NODE      DT_ALIAS(led1)
 #define FW_CHUNK_SIZE 512
 
-#define ESC_CHAR 0x7D
-#define SOF_CHAR 0xAA
-#define EOF_CHAR 0x55
-#define XOR_MASK 0x20
+// #define ESC_CHAR 0x7D
+// #define SOF_CHAR 0xAA
+// #define EOF_CHAR 0x55
+// #define XOR_MASK 0x20
 
 #define MCUBOOT_PARTITION_ID FLASH_AREA_ID(mcuboot)
 #define IMAGE_0_PARTITION_ID FLASH_AREA_ID(image_0)
@@ -33,17 +33,6 @@
 #define UART_MAX_RX         1024
 
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED_NODE, gpios);
-
-typedef struct
-{
-    uint8_t soh;
-    uint8_t ver;
-    uint16_t len;
-    uint16_t cmd;
-    void *buff;
-    uint32_t crc;
-    uint8_t eot;
-} frame_fmt_t;
 
 /* Define a struct to hold the buffer and its length */
 struct uart_data
@@ -66,6 +55,22 @@ void uart_send(const struct device *dev, const uint8_t *data, size_t len)
         uart_poll_out(dev, data[i]);
     }
     printk("Sent %d bytes\n", len);
+}
+
+void send_ack(frame_frm_t *frame, const struct device *uart_dev)
+{
+    frame_frm_t frmt = FF_FRAME_POPULATE_V1_ACK(frame->cmd, frame->id);
+    frmt.crc = 0xffff;
+
+    ff_buff_t *ff_buff = ff_create_frame(&frmt);
+    if (!ff_buff)
+    {
+        printk("Failed to create frame\n");
+        return;
+    }
+
+    uart_send(uart_dev, ff_buff->buff, ff_buff->len);
+    ff_free_frame(ff_buff);
 }
 
 void serial_cb(const struct device *dev, void *user_data)
@@ -135,7 +140,6 @@ int init_uart(const struct device *dev)
     }
 
     uart_irq_rx_enable(dev);
-
     return 0;
 }
 
@@ -193,7 +197,7 @@ void handle_error(state_dfu_context_t *state_ctx, struct flash_img_context *ctx,
 
 int main(void)
 {
-    printk("Hello World! OTA 1 State machine OTA update\n");
+    printk("Hello World! OTA 4 State machine OTA update\n");
 
     // LED initialization
     int err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
@@ -348,6 +352,8 @@ void handle_dfu_writing(state_dfu_context_t *state_ctx, struct flash_img_context
         free(state_ctx->buffer);
     }
 
+    // create a ack  frame
+
     while (k_msgq_get(&uart_msgq, &rx_buf, K_FOREVER) == 0)
     {
         frame_frm_t frame;
@@ -361,6 +367,7 @@ void handle_dfu_writing(state_dfu_context_t *state_ctx, struct flash_img_context
         }
 
         printk("Data length: %d\n", frame.len);
+        send_ack(&frame, uart_dev);
 
         if (frame.buff && frame.len == 512)
         {
@@ -373,6 +380,7 @@ void handle_dfu_writing(state_dfu_context_t *state_ctx, struct flash_img_context
                 break;
             }
             printk(" (%i) Wrote %d bytes:\n", i, frame.len);
+            send_ack(&frame, uart_dev);
         }
         else
         {

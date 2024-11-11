@@ -336,6 +336,8 @@ ff_buff_t *ff_create_frame(frame_frm_t *frame)
         return NULL;
     }
 
+    free(buffer);
+
     ff_buff_t *ff_buff = malloc(sizeof(ff_buff_t));
     if (!ff_buff)
     {
